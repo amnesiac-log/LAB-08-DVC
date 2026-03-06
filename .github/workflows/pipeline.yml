@@ -1,0 +1,82 @@
+name: MLOps Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  train-and-evaluate:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install dvc[s3]
+
+    - name: Configure AWS credentials
+      run: |
+        mkdir -p ~/.aws
+        echo "[default]" > ~/.aws/credentials
+        echo "aws_access_key_id=${{ secrets.AWS_ACCESS_KEY_ID }}" >> ~/.aws/credentials
+        echo "aws_secret_access_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> ~/.aws/credentials
+
+    - name: Pull dataset from DVC
+      run: dvc pull
+
+    - name: Train model
+      run: python src/train.py
+
+    - name: Upload metrics artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: metrics
+        path: metrics.json
+
+    - name: Compare metrics
+      id: compare
+      run: |
+        if [ -f previous_metrics.json ]; then
+          python - <<EOF
+import json
+with open("metrics.json") as f:
+    new=json.load(f)
+with open("previous_metrics.json") as f:
+    old=json.load(f)
+
+print("New RMSE:", new["rmse"])
+print("Old RMSE:", old["rmse"])
+
+if new["rmse"] < old["rmse"]:
+    print("MODEL_IMPROVED=true")
+else:
+    print("MODEL_IMPROVED=false")
+EOF
+        else
+          echo "MODEL_IMPROVED=true"
+        fi >> $GITHUB_ENV
+
+    - name: Build Docker image
+      if: env.MODEL_IMPROVED == 'true'
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/mlops-housing-model:latest .
+
+    - name: Login to DockerHub
+      if: env.MODEL_IMPROVED == 'true'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Push Docker image
+      if: env.MODEL_IMPROVED == 'true'
+      run: |
+        docker push ${{ secrets.DOCKER_USERNAME }}/mlops-housing-model:latest
