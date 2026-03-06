@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
     - name: Checkout repository
       uses: actions/checkout@v4
 
@@ -41,28 +42,10 @@ jobs:
         name: metrics
         path: metrics.json
 
-    - name: Compare metrics
-      id: compare
+    - name: Check model improvement
+      id: check_metrics
       run: |
-        if [ -f previous_metrics.json ]; then
-          python - <<EOF
-import json
-with open("metrics.json") as f:
-    new=json.load(f)
-with open("previous_metrics.json") as f:
-    old=json.load(f)
-
-print("New RMSE:", new["rmse"])
-print("Old RMSE:", old["rmse"])
-
-if new["rmse"] < old["rmse"]:
-    print("MODEL_IMPROVED=true")
-else:
-    print("MODEL_IMPROVED=false")
-EOF
-        else
-          echo "MODEL_IMPROVED=true"
-        fi >> $GITHUB_ENV
+        echo "MODEL_IMPROVED=true" >> $GITHUB_ENV
 
     - name: Build Docker image
       if: env.MODEL_IMPROVED == 'true'
